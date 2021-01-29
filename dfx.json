@@ -9,7 +9,7 @@
         "whoami"
       ],
       "frontend": {
-        "entrypoint": "src/whoami_assets/public/index.js"
+        "entrypoint": "src/whoami_assets/public/index.ts"
       },
       "source": [
         "src/whoami_assets/assets",
