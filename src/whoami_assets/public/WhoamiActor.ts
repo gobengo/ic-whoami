@@ -12,13 +12,13 @@ type Authenticator = typeof authenticator;
  * Coordinates an end-user authenticating and then seeing who they are (whoami).
  * @param window 
  */
-export default async function WhoamiActor({ render }: {
+export default async function WhoamiActor(this: Pick<typeof globalThis, 'document'>, { render }: {
     render(el: Element): void;
 }) {
     await Promise.all([
         testWhoamiContract({ render }),
         greetUser(),
-        authenticate({ render }),
+        authenticate.call(this, { render }),
     ])
 }
 
@@ -36,7 +36,6 @@ async function testWhoamiContract({render}:{
     render(el: Node): void;
 }) {
     const log = makeLog('whoamiContract')
-    // log('info', {whoamiContract})
     // @ts-ignore
     const { default: whoamiContract } = await import('ic:canisters/whoami')
     log('debug', 'invoking whoamiContract.whoami()', whoamiContract)
@@ -58,35 +57,50 @@ async function testWhoamiContract({render}:{
  * The end-user will be redirected away to authenticate, then sent back, and this will run a second time.
  * If the URL looks like an AuthenticationResponse, call authenticator.receiveAuthenticationResponse();
  */
-async function authenticate({render}:{
+async function authenticate(this: Pick<typeof globalThis, 'document'>, {render}:{
     render(el: Element): void;
 }) {
+    const { document } = this;
     const log = makeLog('authenticate');
     log('debug', 'init');
-    const url = new URL(document.location.href);
-    const isAuthenticationRedirect = url.searchParams.has('access_token');
+    const isAuthenticationRedirect = (new URL(this.document.location.href)).searchParams.has('access_token');
     if ( ! isAuthenticationRedirect) {
         log('debug', 'initiating sendAuthenticationRequest')
         if (confirm('Do you want to Authenticate?')) {
-            authenticator.sendAuthenticationRequest({scope:[]})
+            setImmediate(() => authenticator.sendAuthenticationRequest({scope:[]}))
         }
         return;
     } else {
-        if (isFutureAuthenticator(authenticator)) {
-            alert('Thanks for authenticating. This web page will now receive the AuthenticationResponse.')
-            log('debug', 'initiating receiveAuthenticationResponse')
-            const receive = () => isFutureAuthenticator(authenticator) && authenticator.receiveAuthenticationResponse();
-            setImmediate(receive);
-            /*
-            for await (const identity of authenticator.identities {
-                log('info', 'new @dfinity/authentication identity', identity);
-            }
-            */
-        } else {
-            log('warn', '@dfinity/authentication authenticator does NOT support receiveAuthenticationResponse. You must be using an old version.')
+        render(LoadingElement({
+            createElement: document.createElement.bind(document)
+        }));
+
+        alert('Thanks for authenticating. This web page will now receive the AuthenticationResponse.')
+
+        // defer this just to let others set up first.
+        const url = new URL(document.location.href);
+        setImmediate(receiveUrl.bind(this, url));
+        /*
+        for await (const identity of authenticator.identities {
+            log('info', 'new @dfinity/authentication identity', identity);
+        }
+        */
+    }
+    return;
+
+    function receiveUrl (url: URL) {
+        const typeofReceiveAuthenticationResponse = typeof authenticator.receiveAuthenticationResponse;
+        switch (typeof authenticator.receiveAuthenticationResponse) {
+            case "function":
+                log('debug', 'doing receive', { url });
+                authenticator.receiveAuthenticationResponse(url);
+                break;
+            default:
+                log('warn', 'authenticator.receiveAuthenticationResponse is not a function!', { typeofReceiveAuthenticationResponse })
         }
     }
 }
+
 
 function makeLog(loggerName: string) {
     return (level: 'debug'|'info'|'error'|'warn', ...loggables: any[]) => {
@@ -99,11 +113,9 @@ function makeLog(loggerName: string) {
     }
 }
 
-interface FutureAuthenticator extends Authenticator {
-    receiveAuthenticationResponse(): Promise<void>;
-}
-
-function isFutureAuthenticator(authenticator: Authenticator): authenticator is FutureAuthenticator {
-    if (typeof (authenticator as FutureAuthenticator)?.receiveAuthenticationResponse !== 'function') return false;
-    return true;
+function LoadingElement({ createElement }: Pick<Document, 'createElement'>) {
+    const loading = createElement('marquee');
+    loading.innerHTML = 'Loading&hellip;'
+    loading.direction = 'right';
+    return loading;
 }
