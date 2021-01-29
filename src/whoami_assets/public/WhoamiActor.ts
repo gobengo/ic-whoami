@@ -1,3 +1,4 @@
+import { Principal } from "@dfinity/agent";
 import { authenticator } from "@dfinity/authentication";
 
 /**
@@ -13,6 +14,7 @@ type Authenticator = typeof authenticator;
  */
 export default async function WhoamiActor(window: Window) {
     await Promise.all([
+        testWhoamiContract(),
         greetUser(),
         authenticate(),
     ])
@@ -20,7 +22,30 @@ export default async function WhoamiActor(window: Window) {
 
 /** First thing a user sees is a hello and some orientation. */
 async function greetUser() {
+    if (['','0', 'false'].includes(new URL(location.href).searchParams.get('greet') || '')) {
+        // url has ?greet=false. skip
+        return;
+    }
     alert('welcome. We will now authenticate you using an Internet Computer Identity Provider. You will be redirected away, but then right back. See you soon, whoever you are!')
+}
+
+/** Ask the ic canister `whoami()` and log the response */
+async function testWhoamiContract() {
+    const log = makeLog('whoamiContract')
+    // log('info', {whoamiContract})
+    // @ts-ignore
+    const { default: whoamiContract } = await import('ic:canisters/whoami')
+    log('debug', 'invoking whoamiContract.whoami()', whoamiContract)
+    const whoamiResponse = await whoamiContract.whoami();
+    if (typeof (whoamiResponse as Principal).toHex === 'function') {
+        const hex = whoamiResponse.toHex();
+        log('info', 'The whoami() contract method says your publicKey|der|hex is ', hex)
+        log('info', {
+            principal: whoamiResponse,
+        })
+    } else {
+        console.warn('unexpected whoamiResponse', whoamiResponse)
+    }
 }
 
 /**
@@ -35,7 +60,9 @@ async function authenticate() {
     const isAuthenticationRedirect = url.searchParams.has('access_token');
     if ( ! isAuthenticationRedirect) {
         log('debug', 'initiating sendAuthenticationRequest')
-        authenticator.sendAuthenticationRequest({scope:[]})
+        if (confirm('Do you want to Authenticate?')) {
+            authenticator.sendAuthenticationRequest({scope:[]})
+        }
         return;
     } else {
         if (isFutureAuthenticator(authenticator)) {
@@ -57,7 +84,7 @@ async function authenticate() {
 
 function makeLog(loggerName: string) {
     return (level: 'debug'|'info'|'error'|'warn', ...loggables: any[]) => {
-        let message = [loggerName, ...loggables]
+        let message = [`[${loggerName}]`, ...loggables]
         if (typeof console[level] === 'function') {
             console[level](...message)
         } else {
