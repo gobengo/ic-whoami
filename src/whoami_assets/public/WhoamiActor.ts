@@ -12,11 +12,13 @@ type Authenticator = typeof authenticator;
  * Coordinates an end-user authenticating and then seeing who they are (whoami).
  * @param window 
  */
-export default async function WhoamiActor(window: Window) {
+export default async function WhoamiActor({ render }: {
+    render(el: Element): void;
+}) {
     await Promise.all([
-        testWhoamiContract(),
+        testWhoamiContract({ render }),
         greetUser(),
-        authenticate(),
+        authenticate({ render }),
     ])
 }
 
@@ -30,7 +32,9 @@ async function greetUser() {
 }
 
 /** Ask the ic canister `whoami()` and log the response */
-async function testWhoamiContract() {
+async function testWhoamiContract({render}:{
+    render(el: Node): void;
+}) {
     const log = makeLog('whoamiContract')
     // log('info', {whoamiContract})
     // @ts-ignore
@@ -43,6 +47,7 @@ async function testWhoamiContract() {
         log('info', {
             principal: whoamiResponse,
         })
+        render(document.createTextNode(hex))
     } else {
         console.warn('unexpected whoamiResponse', whoamiResponse)
     }
@@ -53,7 +58,9 @@ async function testWhoamiContract() {
  * The end-user will be redirected away to authenticate, then sent back, and this will run a second time.
  * If the URL looks like an AuthenticationResponse, call authenticator.receiveAuthenticationResponse();
  */
-async function authenticate() {
+async function authenticate({render}:{
+    render(el: Element): void;
+}) {
     const log = makeLog('authenticate');
     log('debug', 'init');
     const url = new URL(document.location.href);
@@ -70,7 +77,6 @@ async function authenticate() {
             log('debug', 'initiating receiveAuthenticationResponse')
             const receive = () => isFutureAuthenticator(authenticator) && authenticator.receiveAuthenticationResponse();
             setImmediate(receive);
-            alert('@todo add more code to show the logged in state.')
             /*
             for await (const identity of authenticator.identities {
                 log('info', 'new @dfinity/authentication identity', identity);
@@ -94,7 +100,7 @@ function makeLog(loggerName: string) {
 }
 
 interface FutureAuthenticator extends Authenticator {
-    receiveAuthenticationResponse(): void;
+    receiveAuthenticationResponse(): Promise<void>;
 }
 
 function isFutureAuthenticator(authenticator: Authenticator): authenticator is FutureAuthenticator {

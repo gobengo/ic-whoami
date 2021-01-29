@@ -15,6 +15,6 @@
     "webpack-cli": "3.3.10"
   },
   "dependencies": {
-    "@dfinity/authentication": "0.0.0-pre.identity-provider.7"
+    "@dfinity/authentication": "^0.0.0-pre.identity-provider.9"
   }
 }
