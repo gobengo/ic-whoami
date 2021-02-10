@@ -158,6 +158,10 @@ interface Session {
   };
 }
 
+/**
+ * Read a Session from persistent Storage.
+ * If there isn't one stored, return undefined.
+ */
 function readSession(): Readonly<Session> | undefined {
   const log = makeLog("readSession");
   const stored = localStorage.getItem("ic-whoami-session");
@@ -177,11 +181,20 @@ function readSession(): Readonly<Session> | undefined {
   return parsed as Session;
 }
 
+/**
+ * Write a Session to persistent Storage.
+ * @param session - session to store
+ */
 function writeSession(session: Session) {
   const stringified = JSON.stringify(session, null, 2);
   localStorage.setItem("ic-whoami-session", stringified);
 }
 
+/**
+ * Return a Session, somehow.
+ * If one is stored, return it.
+ * Otherwise, create a brand new one, save it, and return it.
+ */
 function readOrCreateSession(): Readonly<Session> {
   const log = makeLog("readOrCreateSession");
   const session1 = readSession();
@@ -194,6 +207,14 @@ function readOrCreateSession(): Readonly<Session> {
   return session2;
 }
 
+/**
+ * Create a brand new Session.
+ * New sessions have an identity, but they aren't yet authenticated.
+ * i.e. they have an ed25519 keyPair created right here,
+ * but the `.authenticationResponse` property is undefined.
+ * AuthenticationResponse can be requested via @dfinity/authentication
+ * `authenticator.sendAuthenticationRequest`
+ */
 function createSession(): Readonly<Session> {
   const seed = crypto.getRandomValues(new Uint8Array(32));
   const keyPair = Ed25519KeyIdentity.generate(seed).getKeyPair();
@@ -208,18 +229,31 @@ function createSession(): Readonly<Session> {
   };
 }
 
+/**
+ * Encode the input as a hexidecimal number string.
+ * @param input - thing to hex-encode
+ */
 function toHex(input: Uint8Array): string {
   return Array.from(input)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
 
+/**
+ * Decode a hex string to bytes
+ * @param hex - hexidecimal number string to decode
+ */
 function hexToBytes(hex: string) {
   return Uint8Array.from(
     (hex.match(/.{2}/gi) || []).map((s) => parseInt(s, 16))
   );
 }
 
+/**
+ * Given a Session, return a corresponding @dfinity/authentication SignIdentity.
+ * The only supported SignIdentity is Ed25519KeyIdentity (so far)
+ * @param session - ic-whoami Session to use as inputs to SignIdentity construction
+ */
 function SessionSignIdentity(session: Session): SignIdentity {
   const id = Ed25519KeyIdentity.fromSecretKey(
     hexToBytes(session.identity.secretKey.hex)
@@ -227,6 +261,10 @@ function SessionSignIdentity(session: Session): SignIdentity {
   return id;
 }
 
+/**
+ * Session wrapped so it can be passed to @dfinity/authentication Authenticator methods
+ * @param session - ic-whoami Session
+ */
 function AuthenticatorSession(session: Session) {
   const log = makeLog("AuthenticatorSession");
   const sessionIdentity = SessionSignIdentity(session);
@@ -284,6 +322,10 @@ async function testWhoamiContract(
   }
 }
 
+/**
+ * A silly element that's like a loading spinner, but it's a <marquee />
+ * @param this Window
+ */
 function LoadingElement(this: Pick<typeof globalThis, "document">) {
   const loading = this.document.createElement("marquee");
   loading.innerHTML = "Loading&hellip;";
