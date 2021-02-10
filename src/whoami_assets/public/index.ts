@@ -2,11 +2,11 @@
 import { Renderer } from "./render";
 import WhoamiActor from "./WhoamiActor";
 
-;(async () => { await main.call(globalThis); })();
+(async () => {
+  await main.call(globalThis);
+})();
 
-async function main(this: {
-    document: Document
-}) {
-    const render = Renderer(document.querySelector('app') || document.body);
-    WhoamiActor.call(this, { render, });
+async function main(this: { document: Document }) {
+  const render = Renderer(document.querySelector("app") || document.body);
+  WhoamiActor.call(this, { render });
 }

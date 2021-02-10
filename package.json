@@ -4,7 +4,9 @@
   "description": "",
   "keywords": [],
   "scripts": {
-    "build": "webpack"
+    "build": "webpack",
+    "prettier": "prettier 'src/whoami_assets/**/*.(ts|tsx|js|jsx)' --check",
+    "prettier:write": "npm run prettier -- --write"
   },
   "devDependencies": {
     "@dfinity/agent": "0.6.21",
