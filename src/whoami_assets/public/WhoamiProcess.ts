@@ -15,20 +15,15 @@ import {
 // @ts-expect-error because this can't be resolved without configuring the resolver to point to `dfx build` output
 import whoamiContract from "ic:canisters/whoami";
 import { Render } from "./render";
+import * as assert from "assert"
 
 /**
- * Use an Authenticator to control authentication on the page.
- * See below for usage.
- * tl;dr use sendAuthenticationRequest, receiveAuthenticationResponse
+ * Main process for ic-whoami.
+ * This process runs on an Internet Computer canister web page running @dfinity/bootstrap.
+ * It should help the user authenticate using ic-id, then show the end-user the publicKey
+ * or principal of their Authenticated Session.
  */
-type Authenticator = typeof authenticator;
-
-/**
- * Coordinates an end-user authenticating and then seeing their publicKey/principal.
- * sends/receives messages via DOM Events.
- * @param window
- */
-export default async function WhoamiActor(
+export default async function WhoamiProcess(
   this: Pick<typeof globalThis, "document">,
   options: {
     render: Render;
@@ -44,38 +39,15 @@ export default async function WhoamiActor(
   ]);
 }
 
-/** Ask the ic canister `whoami()` and log the response */
-async function testWhoamiContract(
-  this: Pick<typeof globalThis, "document">,
-  options: {
-    render: Render;
-  }
-) {
-  const log = makeLog("whoamiContract");
-  log("debug", "invoking whoamiContract.whoami()", whoamiContract);
-  const { render } = options;
-  render(LoadingElement.call(this));
-  const whoamiResponse = await whoamiContract.whoami();
-  if (typeof (whoamiResponse as Principal).toHex === "function") {
-    const hex = whoamiResponse.toHex();
-    log(
-      "info",
-      "The whoami() contract method says your publicKey|der|hex is ",
-      hex
-    );
-    log("info", {
-      principal: whoamiResponse,
-    });
-    render(this.document.createTextNode(hex));
-  } else {
-    console.warn("unexpected whoamiResponse", whoamiResponse);
-  }
-}
-
 /**
- * Coordinate determining who the end-user is by sending an AuthenticationRequest to the @dfinity/identity-provider.
- * The end-user will be redirected away to authenticate, then sent back, and this will run a second time.
- * If the URL looks like an AuthenticationResponse, call authenticator.receiveAuthenticationResponse();
+ * Use @dfinity/authentication Authenticator + session to set-up authn state.
+ * * on load, read a session from storage, or else create a new one
+ *   * the session MUST have an ed25519 keyPair
+ * * if the session doesn't have an authenticationResponse
+ *   * if the current URL looks like an Authentication Response, use that.
+ *   * else request one from the ic-id Identity Provider via
+ *     `authenticator.sendAuthenticationRequest` (which will redirect away)
+ * * pass the session to `authenticator.useSession`
  */
 async function authenticate(
   this: Pick<typeof globalThis, "document">,
@@ -83,23 +55,38 @@ async function authenticate(
 ) {
   const { document } = this;
   const log = makeLog("authenticate");
-  log("debug", "init");
-  // This contains a secretKey.
+  
+  // "on load, read a session from storage, or else create a new one."
   let secretSession = readOrCreateSession();
-  log("debug", "session is", secretSession, {
-    secretSessionPublicKeyHex: toHex(
-      SessionSignIdentity(secretSession).getPublicKey().toDer()
-    ),
-  });
+  const secretSessionPublicKeyHex = toHex(SessionSignIdentity(secretSession).getPublicKey().toDer())
+  log("debug", "initial session is", secretSession, {secretSessionPublicKeyHex});
 
-  // if we have no authenticationResponse, we might need to set it
+  // "if the session doesn't have an authenticationResponse"
   if (!secretSession.authenticationResponse) {
-    log("debug", "no session.authenticationResponse");
-    // might this URL be an authenticationResponse?
-    if (!/access_token=/.test(location.search)) {
-      // no authenticationResponse... User needs to log in.
+    // "if the current URL looks like an Authentication Response, use that."
+    if (/access_token=/.test(location.search)) {
+      writeSession({
+        ...secretSession,
+        authenticationResponse: location.href,
+      });
+      secretSession = readOrCreateSession();
+    } else {
+      // "else request one from the ic-id Identity Provider"
+      /*
+      We don't have an AuthenticationResponse, but that's required for an authenticated Session.
+      We need to request an AuthenticationResponse.
+      We do that by sending an AuthenticationRequest to an IdentityProvider,
+      which should respond with a resulting AuthenticationResponse
+      (after ensuring end-user consent to signatures).
+      AuthenticaticationRequests are sent by redirecting the user-agent to the IdentityProvider.
+      The IdentityProvider will send an AuthenticationResponse by redirecting the user-agent
+      back to your redirect_uri (defaults to this page).
+      When your page handles the authenticationResponse, it can provide it to
+      `authenticator.useSession({ authenticationResponse, identity })`
+      */
       if (confirm("log in?")) {
         authenticator.sendAuthenticationRequest({
+          // redirectUri: /* default */ new URL(location.href),
           scope: [
             {
               type: "CanisterScope",
@@ -108,21 +95,25 @@ async function authenticate(
           ],
           session: AuthenticatorSession(secretSession),
         });
+      } else {
+        log('warn', 'user has no authenticated session, yet declined to log in.')
       }
-    } else {
-      // use this url as authenticationResponse
-      writeSession({
-        ...secretSession,
-        authenticationResponse: location.href,
-      });
-      secretSession = readOrCreateSession();
     }
+    // now we have an authenticationResponse
+    assert.ok(secretSession.authenticationResponse);
   }
+  // We either have a new candidate session, or one from storage.
+  // Either way, we want to use it.
   const useSessionCommand = AuthenticatorSession(secretSession);
-  log("debug", "useSessionCommand", useSessionCommand);
   authenticator.useSession(useSessionCommand);
 }
 
+/**
+ * Listen for changes to the authenticated Identity.
+ * For each identity:
+ * * log the new identity principalHex
+ * * call testWhoamiContract to test the new identity
+ */
 async function handleEachIdentity(
   this: Pick<typeof globalThis, "document">,
   options: {
@@ -142,17 +133,8 @@ async function handleEachIdentity(
       ...identity,
       principalHex,
     });
-    await new Promise((resolve) => setTimeout(resolve, 10));
     await testWhoamiContract.call(this, { render });
   }
-}
-
-function LoadingElement(this: Pick<typeof globalThis, "document">) {
-  const loading = this.document.createElement("marquee");
-  loading.innerHTML = "Loading&hellip;";
-  loading.direction = "right";
-  loading.behavior = "alternate";
-  return loading;
 }
 
 interface Session {
@@ -256,4 +238,40 @@ function AuthenticatorSession(session: Session) {
       },
     },
   };
+}
+
+/** Ask the ic canister `whoami()` and log the response */
+async function testWhoamiContract(
+  this: Pick<typeof globalThis, "document">,
+  options: {
+    render: Render;
+  }
+) {
+  const log = makeLog("whoamiContract");
+  log("debug", "invoking whoamiContract.whoami()", whoamiContract);
+  const { render } = options;
+  render(LoadingElement.call(this));
+  const whoamiResponse = await whoamiContract.whoami();
+  if (typeof (whoamiResponse as Principal).toHex === "function") {
+    const hex = whoamiResponse.toHex();
+    log(
+      "info",
+      "The whoami() contract method says your publicKey|der|hex is ",
+      hex
+    );
+    log("info", {
+      principal: whoamiResponse,
+    });
+    render(this.document.createTextNode(hex));
+  } else {
+    console.warn("unexpected whoamiResponse", whoamiResponse);
+  }
+}
+
+function LoadingElement(this: Pick<typeof globalThis, "document">) {
+  const loading = this.document.createElement("marquee");
+  loading.innerHTML = "Loading&hellip;";
+  loading.direction = "right";
+  loading.behavior = "alternate";
+  return loading;
 }
