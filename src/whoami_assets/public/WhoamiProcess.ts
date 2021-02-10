@@ -15,23 +15,26 @@ import {
 // @ts-expect-error because this can't be resolved without configuring the resolver to point to `dfx build` output
 import whoamiContract from "ic:canisters/whoami";
 import { Render } from "./render";
-import * as assert from "assert"
+import * as assert from "assert";
 
 /**
  * Main process for ic-whoami.
  * This process runs on an Internet Computer canister web page running @dfinity/bootstrap.
  * It should help the user authenticate using ic-id, then show the end-user the publicKey
  * or principal of their Authenticated Session.
+ * @param this Window
+ * @param options options
+ * @param options.render - call to render something where the end-user can see it.
  */
 export default async function WhoamiProcess(
   this: Pick<typeof globalThis, "document">,
   options: {
     render: Render;
   }
-) {
+): Promise<void> {
   const { render } = options;
   await Promise.all([
-    authenticate.call(this, { render }),
+    authenticate.call(this),
     handleEachIdentity.call(this, {
       events: this.document,
       render,
@@ -48,18 +51,19 @@ export default async function WhoamiProcess(
  *   * else request one from the ic-id Identity Provider via
  *     `authenticator.sendAuthenticationRequest` (which will redirect away)
  * * pass the session to `authenticator.useSession`
+ * @param this Window
  */
-async function authenticate(
-  this: Pick<typeof globalThis, "document">,
-  options: { render: Render }
-) {
-  const { document } = this;
+async function authenticate(this: Pick<typeof globalThis, "document">) {
   const log = makeLog("authenticate");
-  
+
   // "on load, read a session from storage, or else create a new one."
   let secretSession = readOrCreateSession();
-  const secretSessionPublicKeyHex = toHex(SessionSignIdentity(secretSession).getPublicKey().toDer())
-  log("debug", "initial session is", secretSession, {secretSessionPublicKeyHex});
+  const secretSessionPublicKeyHex = toHex(
+    SessionSignIdentity(secretSession).getPublicKey().toDer()
+  );
+  log("debug", "initial session is", secretSession, {
+    secretSessionPublicKeyHex,
+  });
 
   // "if the session doesn't have an authenticationResponse"
   if (!secretSession.authenticationResponse) {
@@ -96,7 +100,10 @@ async function authenticate(
           session: AuthenticatorSession(secretSession),
         });
       } else {
-        log('warn', 'user has no authenticated session, yet declined to log in.')
+        log(
+          "warn",
+          "user has no authenticated session, yet declined to log in."
+        );
       }
     }
     // now we have an authenticationResponse
@@ -113,6 +120,10 @@ async function authenticate(
  * For each identity:
  * * log the new identity principalHex
  * * call testWhoamiContract to test the new identity
+ * @param this Window
+ * @param options options
+ * @param options.events - where to dispatch/listenFor DOM events
+ * @param options.render - call to render something where the end-user can see it.
  */
 async function handleEachIdentity(
   this: Pick<typeof globalThis, "document">,
@@ -240,7 +251,12 @@ function AuthenticatorSession(session: Session) {
   };
 }
 
-/** Ask the ic canister `whoami()` and log the response */
+/**
+ * Ask the ic canister `whoami()` and log the response.
+ * @param this Window
+ * @param options options
+ * @param options.render - call to render something where the end-user can see it.
+ */
 async function testWhoamiContract(
   this: Pick<typeof globalThis, "document">,
   options: {

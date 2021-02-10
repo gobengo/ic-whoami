@@ -1,4 +1,3 @@
-// @ts-ignore
 import { Renderer } from "./render";
 import WhoamiProcess from "./WhoamiProcess";
 
