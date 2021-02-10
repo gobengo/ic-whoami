@@ -1,6 +1,6 @@
 // @ts-ignore
 import { Renderer } from "./render";
-import WhoamiActor from "./WhoamiActor";
+import WhoamiProcess from "./WhoamiProcess";
 
 (async () => {
   await main.call(globalThis);
@@ -8,5 +8,5 @@ import WhoamiActor from "./WhoamiActor";
 
 async function main(this: { document: Document }) {
   const render = Renderer(document.querySelector("app") || document.body);
-  WhoamiActor.call(this, { render });
+  WhoamiProcess.call(this, { render });
 }
