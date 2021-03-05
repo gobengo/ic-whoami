@@ -3,6 +3,7 @@ import {
   AnonymousIdentity,
   blobFromHex,
   blobFromUint8Array,
+  HttpAgent,
   makeLog,
   Principal,
   SignIdentity,
@@ -12,10 +13,12 @@ import {
   Ed25519KeyIdentity,
   IdentitiesIterable,
 } from "@dfinity/authentication";
-// @ts-expect-error because this can't be resolved without configuring the resolver to point to `dfx build` output
-import whoamiContract from "ic:canisters/whoami";
+import whoamiInterfaceFactory from "./whoami.did";
 import { Render } from "./render";
 import * as assert from "assert";
+import * as canisterIds from "./canisters";
+
+export type PublicIdentity = SignIdentity|AnonymousIdentity
 
 /**
  * Main process for ic-whoami.
@@ -34,7 +37,17 @@ export default async function WhoamiProcess(
 ): Promise<void> {
   const { render } = options;
   await Promise.all([
-    authenticate.call(this),
+    authenticate.call(this, {
+      onIdentity: async (id) => {
+        console.log('authenticate onIdentity ', { id })
+        const agent = createSessionAgent(id);
+        console.log('calling testWhoamiContract', { agent })
+        await testWhoamiContract.call(this, {
+          agent,
+          render,
+        })
+      }
+    }),
     handleEachIdentity.call(this, {
       events: this.document,
       render,
@@ -52,8 +65,12 @@ export default async function WhoamiProcess(
  *     `authenticator.sendAuthenticationRequest` (which will redirect away)
  * * pass the session to `authenticator.useSession`
  * @param this Window
+ * @param options options
+ * @param options.onIdentity - called with each identity
  */
-async function authenticate(this: Pick<typeof globalThis, "document">) {
+async function authenticate(this: Pick<typeof globalThis, "document">, options: {
+  onIdentity(identity: PublicIdentity): void
+}) {
   const log = makeLog("authenticate");
 
   // "on load, read a session from storage, or else create a new one."
@@ -89,12 +106,14 @@ async function authenticate(this: Pick<typeof globalThis, "document">) {
       `authenticator.useSession({ authenticationResponse, identity })`
       */
       if (confirm("log in?")) {
+        const canisterId = parseCanisterPrincipalText(new URL(location.href))
+        assert.ok(canisterId)
         authenticator.sendAuthenticationRequest({
           // redirectUri: /* default */ new URL(location.href),
           scope: [
             {
               type: "CanisterScope",
-              principal: Actor.canisterIdOf(whoamiContract),
+              principal: Principal.fromText(canisterId),
             },
           ],
           session: AuthenticatorSession(secretSession),
@@ -111,8 +130,34 @@ async function authenticate(this: Pick<typeof globalThis, "document">) {
   }
   // We either have a new candidate session, or one from storage.
   // Either way, we want to use it.
-  const useSessionCommand = AuthenticatorSession(secretSession);
-  authenticator.useSession(useSessionCommand);
+  const publicSession = AuthenticatorSession(secretSession);
+  authenticator.useSession(publicSession);
+
+  const icAgentIdentity = createSessionIdentity(secretSession)
+  options.onIdentity(icAgentIdentity)
+}
+
+/**
+ * Create an IC HttpAgent to act on behalf of the session
+ * @param identity - identity to use to sign icp requests 
+ */
+function createSessionAgent(identity: PublicIdentity) {
+  console.debug('createSessionAgent', { identity })
+  const agent = new HttpAgent({
+    host: '',
+    identity: new AnonymousIdentity(),
+  });
+  return agent;
+}
+
+/**
+ * Given a session, return a SignIdentity
+ * @param secretSession - session
+ * @returns SignIdentity corresponding to info in session
+ */
+function createSessionIdentity(secretSession: Readonly<Session>): PublicIdentity {
+  console.debug('createSessionIdentity', { secretSession })
+  return new AnonymousIdentity();
 }
 
 /**
@@ -133,7 +178,7 @@ async function handleEachIdentity(
   }
 ) {
   const log = makeLog("handleEachIdentity");
-  const { events, render } = options;
+  const { events } = options;
   const identityGenerator = IdentitiesIterable(events);
   for await (const identity of identityGenerator) {
     const principalHex =
@@ -144,9 +189,10 @@ async function handleEachIdentity(
       ...identity,
       principalHex,
     });
-    await testWhoamiContract.call(this, { render });
+    // await testWhoamiContract.call(this, { render });
   }
 }
+
 
 interface Session {
   authenticationResponse: undefined | string;
@@ -293,19 +339,29 @@ function AuthenticatorSession(session: Session) {
  * Ask the ic canister `whoami()` and log the response.
  * @param this Window
  * @param options options
+ * @param options.agent - internet computer agent to use to request whoami canister
  * @param options.render - call to render something where the end-user can see it.
  */
 async function testWhoamiContract(
   this: Pick<typeof globalThis, "document">,
   options: {
+    agent: HttpAgent;
     render: Render;
   }
 ) {
   const log = makeLog("whoamiContract");
+  const whoamiContract = Actor.createActor(
+    whoamiInterfaceFactory,
+    {
+      agent: options.agent,
+      canisterId: canisterIds.whoami,
+    }
+  )
   log("debug", "invoking whoamiContract.whoami()", whoamiContract);
   const { render } = options;
   render(LoadingElement.call(this));
-  const whoamiResponse = await whoamiContract.whoami();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const whoamiResponse = await (whoamiContract as any).whoami();
   if (typeof (whoamiResponse as Principal).toHex === "function") {
     const hex = whoamiResponse.toHex();
     log(
@@ -332,4 +388,17 @@ function LoadingElement(this: Pick<typeof globalThis, "document">) {
   loading.direction = "right";
   loading.behavior = "alternate";
   return loading;
+}
+
+/**
+ * Given a URL, return a canister id that serves it, if any.
+ * @param url - url to parse
+ */
+function parseCanisterPrincipalText(url: URL): undefined|string {
+  const href = url.toString();
+  const canisterIdQueryMatch = href.match(/canisterId=([\w-]+)/)
+  if (canisterIdQueryMatch) {
+    return canisterIdQueryMatch[1];
+  }
+  return;
 }

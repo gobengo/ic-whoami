@@ -1,12 +1,14 @@
+/* eslint-disable @typescript-eslint/no-var-requires,no-undef */
 const path = require("path");
 const TerserPlugin = require("terser-webpack-plugin");
 const dfxJson = require("./dfx.json");
+const webpack = require('webpack');
 
 // List of all aliases for canisters. This creates the module alias for
 // the `import ... from "ic:canisters/xyz"` where xyz is the name of a
 // canister.
 const aliases = Object.entries(dfxJson.canisters).reduce(
-  (acc, [name, _value]) => {
+  (acc, [name]) => {
     // Get the network name, or `local` by default.
     const networkName = process.env["DFX_NETWORK"] || "local";
     const outputRoot = path.join(
@@ -28,6 +30,8 @@ const aliases = Object.entries(dfxJson.canisters).reduce(
 
 /**
  * Generate a webpack configuration for a canister.
+ * @param name - canister name
+ * @param info - dfx.json desription of canister
  */
 function generateWebpackConfigForCanister(name, info) {
   if (typeof info.frontend !== "object") {
@@ -67,7 +71,9 @@ function generateWebpackConfigForCanister(name, info) {
        { test: /\.css$/, use: ['style-loader','css-loader'] }
      ]
     },
-    plugins: [],
+    plugins: [
+      new webpack.EnvironmentPlugin(['CANISTER_ID_whoami']),
+    ],
   };
 }
 
