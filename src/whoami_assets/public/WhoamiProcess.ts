@@ -1,22 +1,23 @@
 import {
   Actor,
   AnonymousIdentity,
-  blobFromHex,
-  blobFromUint8Array,
   HttpAgent,
-  makeLog,
   Principal,
   SignIdentity,
 } from "@dfinity/agent";
 import {
-  authenticator,
+  Authenticator,
+  DelegationChain,
+  DelegationIdentity,
   Ed25519KeyIdentity,
-  IdentitiesIterable,
+  response,
 } from "@dfinity/authentication";
 import whoamiInterfaceFactory from "./whoami.did";
 import { Render } from "./render";
 import * as assert from "assert";
 import * as canisterIds from "./canisters";
+import { DefaultAuthenticatorTransport } from "@dfinity/authentication/.tsc-out/packages/authentication/src/authenticator/Authenticator";
+import { makeLog } from "./log";
 
 export type PublicIdentity = SignIdentity|AnonymousIdentity
 
@@ -48,10 +49,10 @@ export default async function WhoamiProcess(
         })
       }
     }),
-    handleEachIdentity.call(this, {
-      events: this.document,
-      render,
-    }),
+    // handleEachIdentity.call(this, {
+    //   events: this.document,
+    //   render,
+    // }),
   ]);
 }
 
@@ -72,7 +73,12 @@ async function authenticate(this: Pick<typeof globalThis, "document">, options: 
   onIdentity(identity: PublicIdentity): void
 }) {
   const log = makeLog("authenticate");
-
+  const authenticator = new Authenticator({
+    identityProvider: {
+      url: new URL('https://auth.ic0.app/authorize')
+    },
+    transport: DefaultAuthenticatorTransport(document),
+  });
   // "on load, read a session from storage, or else create a new one."
   let secretSession = readOrCreateSession();
   const secretSessionPublicKeyHex = toHex(
@@ -85,7 +91,7 @@ async function authenticate(this: Pick<typeof globalThis, "document">, options: 
   // "if the session doesn't have an authenticationResponse"
   if (!secretSession.authenticationResponse) {
     // "if the current URL looks like an Authentication Response, use that."
-    if (/access_token=/.test(location.search)) {
+    if (/access_token=/.test(location.href)) {
       writeSession({
         ...secretSession,
         authenticationResponse: location.href,
@@ -106,15 +112,19 @@ async function authenticate(this: Pick<typeof globalThis, "document">, options: 
       `authenticator.useSession({ authenticationResponse, identity })`
       */
       if (confirm("log in?")) {
-        const canisterId = parseCanisterPrincipalText(new URL(location.href))
-        assert.ok(canisterId)
+        const assetCanisterId = parseCanisterPrincipalText(new URL(location.href))
+        assert.ok(assetCanisterId)
+        const authnRequestCanisters = [
+          assetCanisterId,
+          canisterIds.whoami,
+        ];
         authenticator.sendAuthenticationRequest({
           // redirectUri: /* default */ new URL(location.href),
           scope: [
-            {
-              type: "CanisterScope",
-              principal: Principal.fromText(canisterId),
-            },
+            ...authnRequestCanisters.map(canisterIdText => ({
+              type: "CanisterScope" as const,
+              principal: Principal.fromText(canisterIdText),
+            })),
           ],
           session: AuthenticatorSession(secretSession),
         });
@@ -145,7 +155,7 @@ function createSessionAgent(identity: PublicIdentity) {
   console.debug('createSessionAgent', { identity })
   const agent = new HttpAgent({
     host: '',
-    identity: new AnonymousIdentity(),
+    identity,
   });
   return agent;
 }
@@ -157,41 +167,53 @@ function createSessionAgent(identity: PublicIdentity) {
  */
 function createSessionIdentity(secretSession: Readonly<Session>): PublicIdentity {
   console.debug('createSessionIdentity', { secretSession })
-  return new AnonymousIdentity();
+  const { authenticationResponse } = secretSession;
+  if ( ! authenticationResponse) {
+    return new AnonymousIdentity();
+  }
+  const hash = new URL(authenticationResponse).hash?.slice(1);
+  console.log('hash', hash)
+  const icidResponse = response.fromQueryString(new URLSearchParams(hash))
+  const parsedBearerToken = response.parseBearerToken(icidResponse.accessToken);
+  const delegationIdentity = DelegationIdentity.fromDelegation(
+    SessionSignIdentity(secretSession),
+    DelegationChain.fromJSON(JSON.stringify(parsedBearerToken)),
+  );
+  return delegationIdentity;
 }
 
-/**
- * Listen for changes to the authenticated Identity.
- * For each identity:
- * * log the new identity principalHex
- * * call testWhoamiContract to test the new identity
- * @param this Window
- * @param options options
- * @param options.events - where to dispatch/listenFor DOM events
- * @param options.render - call to render something where the end-user can see it.
- */
-async function handleEachIdentity(
-  this: Pick<typeof globalThis, "document">,
-  options: {
-    events: Pick<EventTarget, "addEventListener" | "dispatchEvent">;
-    render: Render;
-  }
-) {
-  const log = makeLog("handleEachIdentity");
-  const { events } = options;
-  const identityGenerator = IdentitiesIterable(events);
-  for await (const identity of identityGenerator) {
-    const principalHex =
-      identity.type === "AnonymousIdentity"
-        ? new AnonymousIdentity().getPrincipal().toHex()
-        : Principal.selfAuthenticating(blobFromHex(identity.publicKey)).toHex();
-    log("debug", "identity", {
-      ...identity,
-      principalHex,
-    });
-    // await testWhoamiContract.call(this, { render });
-  }
-}
+// /**
+//  * Listen for changes to the authenticated Identity.
+//  * For each identity:
+//  * * log the new identity principalHex
+//  * * call testWhoamiContract to test the new identity
+//  * @param this Window
+//  * @param options options
+//  * @param options.events - where to dispatch/listenFor DOM events
+//  * @param options.render - call to render something where the end-user can see it.
+//  */
+// async function handleEachIdentity(
+//   this: Pick<typeof globalThis, "document">,
+//   options: {
+//     events: Pick<EventTarget, "addEventListener" | "dispatchEvent">;
+//     render: Render;
+//   }
+// ) {
+//   const log = makeLog("handleEachIdentity");
+//   const { events } = options;
+//   const identityGenerator = IdentitiesIterable(events);
+//   for await (const identity of identityGenerator) {
+//     const principalHex =
+//       identity.type === "AnonymousIdentity"
+//         ? new AnonymousIdentity().getPrincipal().toHex()
+//         : Principal.selfAuthenticating(blobFromHex(identity.publicKey)).toHex();
+//     log("debug", "identity", {
+//       ...identity,
+//       principalHex,
+//     });
+//     // await testWhoamiContract.call(this, { render });
+//   }
+// }
 
 
 interface Session {
@@ -312,26 +334,11 @@ function SessionSignIdentity(session: Session): SignIdentity {
  * @param session - ic-whoami Session
  */
 function AuthenticatorSession(session: Session) {
-  const log = makeLog("AuthenticatorSession");
+  // const log = makeLog("AuthenticatorSession");
   const sessionIdentity = SessionSignIdentity(session);
   return {
     authenticationResponse: session.authenticationResponse,
-    identity: {
-      publicKey: sessionIdentity.getPublicKey(),
-      sign: async (challenge: ArrayBuffer) => {
-        challenge = new Uint8Array(challenge);
-        log("debug", "sign", {
-          challenge: String.fromCharCode(...new Uint8Array(challenge)),
-        });
-        const signature: Uint8Array = new Uint8Array(
-          await sessionIdentity.sign(
-            blobFromUint8Array(new Uint8Array(challenge))
-          )
-        );
-        log("debug", "signature", toHex(signature));
-        return signature;
-      },
-    },
+    identity: sessionIdentity,
   };
 }
 
