@@ -16,7 +16,6 @@ import whoamiInterfaceFactory from "./whoami.did";
 import { Render } from "./render";
 import * as assert from "assert";
 import * as canisterIds from "./canisters";
-import { DefaultAuthenticatorTransport } from "@dfinity/authentication/.tsc-out/packages/authentication/src/authenticator/Authenticator";
 import { makeLog } from "./log";
 
 export type PublicIdentity = SignIdentity|AnonymousIdentity
@@ -77,7 +76,6 @@ async function authenticate(this: Pick<typeof globalThis, "document">, options: 
     identityProvider: {
       url: new URL('https://auth.ic0.app/authorize')
     },
-    transport: DefaultAuthenticatorTransport(document),
   });
   // "on load, read a session from storage, or else create a new one."
   let secretSession = readOrCreateSession();
@@ -112,7 +110,8 @@ async function authenticate(this: Pick<typeof globalThis, "document">, options: 
       `authenticator.useSession({ authenticationResponse, identity })`
       */
       if (confirm("log in?")) {
-        const assetCanisterId = parseCanisterPrincipalText(new URL(location.href))
+        const assetCanisterId = parseCanisterPrincipalText(new URL(location.href));
+        console.debug('parsed assetCanisterId from location.href', { assetCanisterId })
         assert.ok(assetCanisterId)
         const authnRequestCanisters = [
           assetCanisterId,
@@ -136,6 +135,7 @@ async function authenticate(this: Pick<typeof globalThis, "document">, options: 
       }
     }
     // now we have an authenticationResponse
+    console.debug('assert.ok secretSession.authenticationResponse', { secretSession })
     assert.ok(secretSession.authenticationResponse);
   }
   // We either have a new candidate session, or one from storage.
@@ -152,12 +152,25 @@ async function authenticate(this: Pick<typeof globalThis, "document">, options: 
  * @param identity - identity to use to sign icp requests 
  */
 function createSessionAgent(identity: PublicIdentity) {
-  console.debug('createSessionAgent', { identity })
-  const agent = new HttpAgent({
-    host: '',
+  const agentOptions = {
+    host: HttpAgentHost(new URL(location.href)),
     identity,
-  });
+  };
+  console.debug('creating HttpAgent', agentOptions)
+  const agent = new HttpAgent(agentOptions);
   return agent;
+}
+
+/**
+ * @param url - URL of current page
+ * @returns - options.host value for @dfinity/agent HttpAgent
+ */
+function HttpAgentHost(url: URL): string {
+  const href = url.toString();
+  if (href.match(/https?:\/\/(.+)\.ic0\.app/i)) {
+    return 'https://gw.dfinity.network'
+  }
+  return '';
 }
 
 /**
@@ -403,6 +416,10 @@ function LoadingElement(this: Pick<typeof globalThis, "document">) {
  */
 function parseCanisterPrincipalText(url: URL): undefined|string {
   const href = url.toString();
+  const hostnameMatch = href.match(/https?:\/\/(.+)\.ic0\.app/i)
+  if (hostnameMatch) {
+    return hostnameMatch[1]
+  }
   const canisterIdQueryMatch = href.match(/canisterId=([\w-]+)/)
   if (canisterIdQueryMatch) {
     return canisterIdQueryMatch[1];
